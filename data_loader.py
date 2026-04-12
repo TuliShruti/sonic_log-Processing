@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from io import BytesIO
+from io import BytesIO, StringIO
 from pathlib import Path
 from typing import Any
 
@@ -25,8 +25,9 @@ def _read_bytes(file: Any) -> bytes:
 
 
 def load_las(file: Any) -> pd.DataFrame:
-    raw_bytes = _read_bytes(file)
-    las = lasio.read(BytesIO(raw_bytes))
+    file_bytes = _read_bytes(file)
+    text = file_bytes.decode("utf-8", errors="ignore")
+    las = lasio.read(StringIO(text))
     dataframe = las.df().reset_index()
 
     if dataframe.columns.size > 0:

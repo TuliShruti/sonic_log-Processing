@@ -21,16 +21,18 @@ SESSION_DEFAULTS: dict[str, Any] = {
     "file_name": None,
     "file_bytes": None,
     "file_type": None,
+    "waveforms": {"XX": None, "XY": None, "YX": None, "YY": None},
+    "waveform_upload_complete": False,
     "raw_df": None,
     "raw_data": None,
     "raw_metadata": None,
     "validation_results": None,
     "processed_df": None,
-    "crossdipole_results": {},
-    "semblance_output": None,
     "crossdipole_data": None,
     "crossdipole_dt": None,
     "crossdipole_params": {},
+    "crossdipole_results": {},
+    "semblance_output": None,
 }
 
 
@@ -46,11 +48,34 @@ def _reset_loaded_state() -> None:
     st.session_state["raw_metadata"] = None
     st.session_state["validation_results"] = None
     st.session_state["processed_df"] = None
-    st.session_state["crossdipole_results"] = {}
-    st.session_state["semblance_output"] = None
     st.session_state["crossdipole_data"] = None
     st.session_state["crossdipole_dt"] = None
     st.session_state["crossdipole_params"] = {}
+    st.session_state["crossdipole_results"] = {}
+    st.session_state["semblance_output"] = None
+
+
+def _detect_waveform_component(file_name: str) -> str | None:
+    upper_name = file_name.upper()
+    for component in ("XX", "XY", "YX", "YY"):
+        if component in upper_name:
+            return component
+    return None
+
+
+def _render_waveform_checklist() -> None:
+    waveforms = st.session_state.get("waveforms", {})
+
+    st.sidebar.markdown("**Waveform Upload Status**")
+    complete = True
+
+    for component in ("XX", "XY", "YX", "YY"):
+        uploaded = waveforms.get(component) is not None
+        complete = complete and uploaded
+        status = "OK" if uploaded else "Missing"
+        st.sidebar.write(f"{component}: {status}")
+
+    st.session_state["waveform_upload_complete"] = complete
 
 
 def _load_page(page_path: Path) -> None:
@@ -81,20 +106,45 @@ def main() -> None:
 
     uploaded_file = st.sidebar.file_uploader(
         "Upload file",
-        type=["las", "csv", "bin"],
+        type=["las", "csv"],
+    )
+
+    uploaded_waveforms = st.sidebar.file_uploader(
+        "Upload binary waveforms",
+        type=["bin"],
+        accept_multiple_files=True,
     )
 
     if uploaded_file is not None:
         file_bytes = uploaded_file.getvalue()
+        file_name = uploaded_file.name
+        file_type = Path(file_name).suffix.lower()
+
         if (
-            st.session_state["file_name"] != uploaded_file.name
+            st.session_state["file_name"] != file_name
             or st.session_state["file_bytes"] != file_bytes
         ):
-            st.session_state["file_name"] = uploaded_file.name
+            st.session_state["file_name"] = file_name
             st.session_state["file_bytes"] = file_bytes
-            st.session_state["file_type"] = Path(uploaded_file.name).suffix.lower()
+            st.session_state["file_type"] = file_type
             _reset_loaded_state()
 
+    if uploaded_waveforms:
+        waveforms = dict(st.session_state.get("waveforms", {}))
+
+        for waveform_file in uploaded_waveforms:
+            component = _detect_waveform_component(waveform_file.name)
+            if component is None:
+                continue
+
+            waveforms[component] = {
+                "name": waveform_file.name,
+                "bytes": waveform_file.getvalue(),
+            }
+
+        st.session_state["waveforms"] = waveforms
+
+    _render_waveform_checklist()
     _load_page(PAGE_CONFIG[selected_page])
 
 
