@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
@@ -24,39 +25,53 @@ def _read_binary(file: Any) -> bytes:
 
 def load_ldeo_binary(
     file: Any,
-    samples_per_trace: int,
-    channels: int = 1,
+    samples_per_trace: int | None = None,
+    channels: int | None = None,
     dtype: str = "float32",
     byte_order: str = "<",
     depth_start: float | None = None,
     depth_step: float | None = None,
 ) -> tuple[np.ndarray, dict[str, Any]]:
     raw_bytes = _read_binary(file)
-    np_dtype = np.dtype(f"{byte_order}{np.dtype(dtype).str[1:]}")
-    flat_data = np.frombuffer(raw_bytes, dtype=np_dtype)
+    buffer = BytesIO(raw_bytes)
 
-    trace_width = samples_per_trace * channels
-    if trace_width <= 0:
-        raise ValueError("samples_per_trace and channels must be positive integers.")
+    depth_levels = int(np.frombuffer(buffer.read(4), dtype=">i4")[0])
+    time_samples = int(np.frombuffer(buffer.read(4), dtype=">i4")[0])
+    receivers = int(np.frombuffer(buffer.read(4), dtype=">i4")[0])
+    _ntool = int(np.frombuffer(buffer.read(4), dtype=">i4")[0])
+    _mode = int(np.frombuffer(buffer.read(4), dtype=">i4")[0])
+    dz = float(np.frombuffer(buffer.read(4), dtype=">f4")[0])
+    _scale = float(np.frombuffer(buffer.read(4), dtype=">f4")[0])
+    dt = float(np.frombuffer(buffer.read(4), dtype=">f4")[0])
 
-    if flat_data.size % trace_width != 0:
-        raise ValueError("Binary size is not compatible with the provided trace dimensions.")
+    if depth_levels <= 0 or time_samples <= 0 or receivers <= 0:
+        raise ValueError("Invalid binary header metadata.")
 
-    trace_count = flat_data.size // trace_width
-    waveform = flat_data.reshape(trace_count, channels, samples_per_trace)
+    payload = np.frombuffer(buffer.read(), dtype=">f4")
+    record_length = 1 + receivers * time_samples
+    expected_values = depth_levels * record_length
+
+    if payload.size < expected_values:
+        raise ValueError("Binary data size mismatch with header metadata")
+
+    records = payload[:expected_values].reshape(depth_levels, record_length)
+    data = records[:, 1:].reshape(depth_levels, receivers, time_samples).astype(np.float32, copy=False)
+
+    if data.size != depth_levels * receivers * time_samples:
+        raise ValueError("Binary data size mismatch with header metadata")
 
     metadata = {
         "format": "LDEO",
-        "dtype": str(np_dtype),
-        "byte_order": byte_order,
-        "samples_per_trace": samples_per_trace,
-        "channels": channels,
-        "trace_count": trace_count,
-        "depth_start": depth_start,
-        "depth_step": depth_step,
+        "depth_levels": depth_levels,
+        "time_samples": time_samples,
+        "receivers": receivers,
+        "dz": dz,
+        "dt": dt,
+        "receiver_spacing_m": 0.1524,
+        "dtype": "float32",
+        "byte_order": ">",
+        "depth_start": depth_start if depth_start is not None else 0.0,
+        "depth_step": depth_step if depth_step is not None else dz,
     }
 
-    if depth_start is not None and depth_step is not None:
-        metadata["depth"] = depth_start + np.arange(trace_count) * depth_step
-
-    return waveform, metadata
+    return data, metadata

@@ -3,156 +3,143 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+from scipy.signal import medfilt
 
 
-def _build_slowness_grid(params: dict[str, Any]) -> np.ndarray:
-    s_min = float(params.get("s_min", 300.0))
-    s_max = float(params.get("s_max", 2500.0))
-    s_step = float(params.get("s_step", 4.0))
-
-    if s_min <= 0 or s_max <= 0 or s_step <= 0:
-        raise ValueError("s_min, s_max, and s_step must be positive.")
-
-    if s_min > s_max:
-        raise ValueError("s_min must be less than or equal to s_max.")
-
-    return np.arange(s_min, s_max + s_step, s_step, dtype=np.float64)
+def generate_slowness(p_min: float, p_max: float, num_p: int) -> np.ndarray:
+    if num_p <= 0:
+        raise ValueError("num_p must be positive")
+    if p_min < 0 or p_max <= p_min:
+        raise ValueError("Require 0 <= p_min < p_max")
+    return np.linspace(p_min, p_max, num_p, dtype=np.float64)
 
 
-def _compute_offsets(
-    nrec: int,
-    rec_spacing: float,
-    offset_mode: str = "zero_based",
-) -> np.ndarray:
-    if rec_spacing <= 0:
-        raise ValueError("rec_spacing must be positive.")
-    if nrec <= 0:
-        raise ValueError("nrec must be positive.")
-
-    indices = np.arange(nrec, dtype=np.float64)
-    if offset_mode == "centered":
-        return (indices - (nrec // 2)) * rec_spacing
-
-    return indices * rec_spacing
+def find_first_arrival(waveform: np.ndarray, threshold_ratio: float = 0.05) -> int:
+    """
+    Returns the sample index of the first arrival onset.
+    waveform shape: (ns, nrec)
+    """
+    energy = np.sum(waveform ** 2, axis=1)
+    threshold = threshold_ratio * np.max(energy)
+    indices = np.where(energy > threshold)[0]
+    return int(indices[0]) if len(indices) > 0 else 0
 
 
-def _remove_moveout(
-    traces: np.ndarray,
-    slowness: float,
+def _shift_trace(trace: np.ndarray, delay_samples: float) -> np.ndarray:
+    sample_axis = np.arange(trace.shape[0], dtype=np.float64)
+    shifted_axis = sample_axis + delay_samples
+    shifted = np.zeros_like(trace, dtype=np.float64)
+
+    valid = (shifted_axis >= 0.0) & (shifted_axis <= sample_axis[-1])
+    if np.any(valid):
+        shifted[valid] = np.interp(shifted_axis[valid], sample_axis, trace)
+
+    return shifted
+
+
+def compute_semblance(
+    waveform: np.ndarray,
     dt: float,
-    offsets: np.ndarray,
+    dx: float,
+    p_values: np.ndarray,
 ) -> np.ndarray:
-    nrec, ns = traces.shape
-    corrected = np.zeros((nrec, ns), dtype=np.float64)
-    sample_axis = np.arange(ns, dtype=np.float64)
-    delay_samples = slowness * offsets / dt
-
-    for receiver in range(nrec):
-        delay = float(delay_samples[receiver])
-        shifted_axis = sample_axis + delay
-        valid = (shifted_axis >= 0.0) & (shifted_axis <= ns - 1)
-
-        if np.any(valid):
-            corrected[receiver, valid] = np.interp(
-                shifted_axis[valid],
-                sample_axis,
-                traces[receiver],
-            )
-
-    return corrected
-
-
-def _windowed_semblance(corrected: np.ndarray, win: int) -> np.ndarray:
-    nrec, ns = corrected.shape
-    panel_row = np.zeros(ns, dtype=np.float64)
-
-    for sample in range(ns):
-        lo = max(0, sample - win)
-        hi = min(ns - 1, sample + win)
-        window = corrected[:, lo : hi + 1]
-        stack = np.sum(window, axis=0)
-        numerator = np.sum(stack * stack)
-        denominator = nrec * np.sum(window * window) + 1e-10
-        panel_row[sample] = numerator / denominator
-
-    return panel_row
-
-
-def compute_semblance(data: np.ndarray, dt: float, params: dict[str, Any]) -> dict[str, np.ndarray]:
     """
-    Compute a time-velocity semblance panel from waveform data.
-
-    Parameters
-    ----------
-    data
-        Waveform array with shape (n_receivers, n_samples).
-    dt
-        Sample interval in microseconds.
-    params
-        Parameter dictionary. Supported keys:
-        - rec_spacing: receiver spacing in meters
-        - s_min: minimum trial slowness in microseconds per meter
-        - s_max: maximum trial slowness in microseconds per meter
-        - s_step: slowness step in microseconds per meter
-        - win: semblance half-window in samples
-
-    Returns
-    -------
-    dict
-        {
-            "semblance": 2D ndarray with shape (n_velocities, n_times),
-            "time": 1D ndarray in microseconds,
-            "velocity": 1D ndarray in meters/second
-        }
+    waveform: (ns, nrec)
+    dt: sampling interval (seconds)
+    dx: receiver spacing
+    p_values: array of slowness values
+    Returns:
+        semblance_panel: (len(p_values), ns)
     """
-    traces = np.asarray(data, dtype=np.float64)
+    traces = np.asarray(waveform, dtype=np.float64)
+    slowness_values = np.asarray(p_values, dtype=np.float64)
 
     if traces.ndim != 2:
-        raise ValueError("data must have shape (n_receivers, n_samples).")
-
+        raise ValueError("waveform must have shape (time_samples, receivers)")
     if dt <= 0:
-        raise ValueError("dt must be positive.")
+        raise ValueError("dt must be positive")
+    if dx <= 0:
+        raise ValueError("dx must be positive")
+    if slowness_values.ndim != 1 or slowness_values.size == 0:
+        raise ValueError("p_values must be a non-empty 1D array")
 
-    win = int(params.get("win", 40))
-    if win <= 0:
-        raise ValueError("win must be a positive integer.")
+    time_samples, receivers = traces.shape
+    offsets = np.arange(receivers, dtype=np.float64) * dx
+    panel = np.zeros((slowness_values.size, time_samples), dtype=np.float64)
 
-    rec_spacing = float(params.get("rec_spacing", 0.1524))
-    offset_mode = str(params.get("offset_mode", "zero_based"))
-    if offset_mode not in {"zero_based", "centered"}:
-        raise ValueError("offset_mode must be 'zero_based' or 'centered'.")
+    for slowness_index, slowness in enumerate(slowness_values):
+        delays = (slowness * offsets) / dt
+        corrected = np.column_stack(
+            [_shift_trace(traces[:, receiver], delays[receiver]) for receiver in range(receivers)]
+        )
 
-    slownesses = _build_slowness_grid(params)
-    offsets = _compute_offsets(traces.shape[0], rec_spacing, offset_mode)
+        stack = np.sum(corrected, axis=1)
+        stack_energy = stack * stack
+        trace_energy = np.sum(corrected * corrected, axis=1)
 
-    panel = np.zeros((slownesses.size, traces.shape[1]), dtype=np.float64)
+        numerator = np.cumsum(stack_energy)
+        denominator = receivers * np.cumsum(trace_energy) + 1e-10
+        panel[slowness_index] = numerator / denominator
 
-    for index, slowness in enumerate(slownesses):
-        corrected = _remove_moveout(traces, slowness, dt, offsets)
-        panel[index] = _windowed_semblance(corrected, win)
+    return panel
 
-    time_axis = np.arange(traces.shape[1], dtype=np.float64) * dt
-    velocity_axis = 1e6 / slownesses
+
+def pick_semblance_curve(semblance: np.ndarray, p_values: np.ndarray, waveform: np.ndarray) -> tuple[np.ndarray, int]:
+    first_arrival_idx = find_first_arrival(waveform, threshold_ratio=0.15)
+
+    picked_p = np.full(semblance.shape[1], np.nan, dtype=np.float64)
+    for sample_index in range(first_arrival_idx, semblance.shape[1]):
+        picked_p[sample_index] = p_values[np.argmax(semblance[:, sample_index])]
+
+    valid_mask = ~np.isnan(picked_p)
+    if np.sum(valid_mask) > 11:
+        picked_p[valid_mask] = medfilt(picked_p[valid_mask], kernel_size=11)
+
+    return picked_p, first_arrival_idx
+
+
+def compute_semblance_from_params(
+    waveform: np.ndarray,
+    dt_microseconds: float,
+    params: dict[str, Any],
+) -> dict[str, np.ndarray]:
+    slowness_min = float(params.get("p_min", 0.0))
+    slowness_max = float(params.get("p_max", 1e-3))
+    num_slowness = int(params.get("num_p", 150))
+    receiver_spacing = float(params.get("rec_spacing", 0.1524))
+
+    slowness_s_per_m = generate_slowness(
+        p_min=slowness_min,
+        p_max=slowness_max,
+        num_p=num_slowness,
+    )
+
+    panel = compute_semblance(
+        waveform=np.asarray(waveform, dtype=np.float64),
+        dt=dt_microseconds * 1e-6,
+        dx=receiver_spacing,
+        p_values=slowness_s_per_m,
+    )
+
+    time_axis_microseconds = np.arange(waveform.shape[0], dtype=np.float64) * dt_microseconds
+    velocity_axis = np.where(slowness_s_per_m > 0, 1.0 / slowness_s_per_m, np.nan)
 
     return {
         "semblance": panel,
-        "time": time_axis,
+        "time": time_axis_microseconds,
         "velocity": velocity_axis,
     }
 
 
 def merge_semblance_output(
     results: dict[str, Any],
-    data: np.ndarray,
-    dt: float,
+    waveform: np.ndarray,
+    dt_microseconds: float,
     params: dict[str, Any],
 ) -> dict[str, Any]:
-    """
-    Return a crossdipole results dictionary with optional semblance output added.
-    """
     merged = dict(results)
 
     if params.get("run_semblance", False):
-        merged["semblance"] = compute_semblance(data, dt, params)
+        merged["semblance"] = compute_semblance_from_params(waveform, dt_microseconds, params)
 
     return merged
