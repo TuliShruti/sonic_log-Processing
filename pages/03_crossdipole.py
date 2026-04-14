@@ -86,6 +86,8 @@ def _run_crossdipole_pipeline(
         )
 
     progress_bar.progress(0.95, text="Stage 4/4: Store results")
+    vp_fast_log = np.nanmedian(fast_velocity, axis=1)
+    vs_slow_log = np.nanmedian(slow_velocity, axis=1)
     results = {
         "preprocess": preprocessed,
         "alford": {
@@ -100,6 +102,11 @@ def _run_crossdipole_pipeline(
             "fast_panels": np.asarray(fast_panels),
             "slow_panels": np.asarray(slow_panels),
         },
+        "logs": {
+            "vp_fast": vp_fast_log,
+            "vs_slow": vs_slow_log,
+        },
+        "depth": np.arange(nz),
     }
     progress_bar.progress(1.0, text="Crossdipole pipeline complete")
     return results

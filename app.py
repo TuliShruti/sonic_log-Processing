@@ -6,6 +6,8 @@ from typing import Any
 
 import streamlit as st
 
+from binary_loader import load_binary
+
 
 APP_DIR = Path(__file__).resolve().parent
 
@@ -15,6 +17,7 @@ PAGE_CONFIG = {
     "Crossdipole": APP_DIR / "pages" / "03_crossdipole.py",
     "Rock Physics": APP_DIR / "pages" / "04_rockphysics.py",
     "Export": APP_DIR / "pages" / "05_export.py",
+    "Stoneley": APP_DIR / "pages" / "06_stoneley.py",
 }
 
 SESSION_DEFAULTS: dict[str, Any] = {
@@ -23,6 +26,7 @@ SESSION_DEFAULTS: dict[str, Any] = {
     "file_type": None,
     "waveforms": {"XX": None, "XY": None, "YX": None, "YY": None},
     "waveform_upload_complete": False,
+    "stoneley_waveform": None,
     "raw_df": None,
     "raw_data": None,
     "raw_metadata": None,
@@ -33,6 +37,7 @@ SESSION_DEFAULTS: dict[str, Any] = {
     "crossdipole_params": {},
     "crossdipole_results": {},
     "semblance_output": None,
+    "stoneley_results": None,
 }
 
 
@@ -114,6 +119,12 @@ def main() -> None:
         type=["bin"],
         accept_multiple_files=True,
     )
+    st.sidebar.subheader("Upload monopole waveform")
+    monopole_file = st.sidebar.file_uploader(
+        "Upload Stoneley (.bin)",
+        type=["bin"],
+        key="stoneley_file",
+    )
 
     if uploaded_file is not None:
         file_bytes = uploaded_file.getvalue()
@@ -143,6 +154,9 @@ def main() -> None:
             }
 
         st.session_state["waveforms"] = waveforms
+
+    if monopole_file is not None:
+        st.session_state["stoneley_waveform"] = load_binary(monopole_file)
 
     _render_waveform_checklist()
     _load_page(PAGE_CONFIG[selected_page])

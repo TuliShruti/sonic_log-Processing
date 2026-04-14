@@ -149,23 +149,6 @@ def main() -> None:
         step=100.0,
         key="sonic_sampling_frequency",
     )
-    col1, col2 = st.columns(2)
-    with col1:
-        lowcut = st.number_input(
-            "Low cut (Hz)",
-            min_value=1.0,
-            value=500.0,
-            step=100.0,
-            key="sonic_lowcut",
-        )
-    with col2:
-        highcut = st.number_input(
-            "High cut (Hz)",
-            min_value=1.0,
-            value=5000.0,
-            step=100.0,
-            key="sonic_highcut",
-        )
 
     if st.button("Load Waveform Arrays", key="load_waveform_arrays_button"):
         try:
@@ -222,6 +205,52 @@ def main() -> None:
         depth_levels = int(st.session_state["depth_levels"])
         depth_idx = st.slider("Select Depth Index", 0, depth_levels - 1, 0, key="sonic_depth_idx")
 
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            dx = st.number_input(
+                "Receiver spacing",
+                min_value=1e-6,
+                value=0.15,
+                step=0.01,
+                key="sonic_receiver_spacing",
+            )
+        with col2:
+            p_min = st.number_input(
+                "Slowness min",
+                min_value=0.0,
+                value=0.0,
+                format="%.6f",
+                key="sonic_p_min",
+            )
+            p_max = st.number_input(
+                "Slowness max",
+                min_value=1e-6,
+                value=0.001,
+                format="%.6f",
+                key="sonic_p_max",
+            )
+        with col3:
+            num_p = st.number_input(
+                "Slowness samples",
+                min_value=1,
+                value=150,
+                step=10,
+                key="sonic_num_p",
+            )
+
+        lowcut = st.number_input(
+            "Low cut (Hz)",
+            min_value=1.0,
+            value=500.0,
+            key="sonic_lowcut",
+        )
+        highcut = st.number_input(
+            "High cut (Hz)",
+            min_value=1.0,
+            value=5000.0,
+            key="sonic_highcut",
+        )
+
         if st.button("Apply Bandpass Filter", key="apply_bandpass_filter_button"):
             try:
                 filtered = {
@@ -246,45 +275,10 @@ def main() -> None:
         waveform = waveform.T
         st.write(f"Selected waveform shape for processing: {waveform.shape}")
 
-        receiver_spacing = st.number_input(
-            "Receiver spacing",
-            min_value=1e-6,
-            value=0.1524,
-            step=0.01,
-            key="sonic_receiver_spacing",
-        )
-        col3, col4, col5 = st.columns(3)
-        with col3:
-            p_min = st.number_input(
-                "Slowness min",
-                min_value=0.0,
-                value=0.0,
-                step=1e-5,
-                format="%.6f",
-                key="sonic_p_min",
-            )
-        with col4:
-            p_max = st.number_input(
-                "Slowness max",
-                min_value=1e-6,
-                value=1e-3,
-                step=1e-5,
-                format="%.6f",
-                key="sonic_p_max",
-            )
-        with col5:
-            num_p = st.number_input(
-                "Slowness samples",
-                min_value=1,
-                value=150,
-                step=1,
-                key="sonic_num_p",
-            )
-
-        if st.button("Compute Semblance", key="sonic_compute_semblance_button"):
+        if st.button("Compute Semblance", key="compute_semblance_button"):
             dt = 1.0 / float(sampling_frequency)
             p_values = generate_slowness(float(p_min), float(p_max), int(num_p))
-            semblance = compute_semblance(waveform, dt, float(receiver_spacing), p_values)
+            semblance = compute_semblance(waveform, dt, float(dx), p_values)
             picked_p, first_arrival_idx = pick_semblance_curve(semblance, p_values, waveform)
 
             with np.errstate(divide="ignore", invalid="ignore"):

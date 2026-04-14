@@ -75,3 +75,11 @@ def load_ldeo_binary(
     }
 
     return data, metadata
+
+
+def load_binary(file: Any) -> dict[str, Any]:
+    data, metadata = load_ldeo_binary(file)
+    return {
+        "data": data,
+        "metadata": metadata,
+    }
