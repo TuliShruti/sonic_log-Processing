@@ -1,0 +1,6 @@
+Expected model file location:
+stoneley/stoneley_model.joblib
+
+The Stoneley page loads the model from the same directory as `stoneley/model.py`.
+If `stoneley_model.joblib` is missing, the app shows a warning and skips prediction
+instead of crashing.

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import streamlit as st
 
@@ -76,7 +78,14 @@ def main() -> None:
 
         p_values = generate_slowness(float(p_min), float(p_max), int(num_p))
         panel = compute_semblance(waveform, dt, float(receiver_spacing), p_values)
-        model = load_model()
+        BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+        model_path = os.path.join(BASE_DIR, "..", "stoneley", "stoneley_model.joblib")
+        model_path = os.path.abspath(model_path)
+        if not os.path.exists(model_path):
+            st.warning("Stoneley model file not found. Skipping prediction.")
+            return
+
+        model = load_model(model_path)
         stoneley_velocity = predict_stoneley(panel, model, p_values)
         depth = np.arange(len(stoneley_velocity))
 

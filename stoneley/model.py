@@ -1,11 +1,17 @@
 from __future__ import annotations
 
+import os
+
 import joblib
 import numpy as np
 
 
-def load_model(path: str = "stoneley_model.joblib"):
-    return joblib.load(path)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def load_model(path: str | None = None):
+    model_path = path or os.path.join(BASE_DIR, "stoneley_model.joblib")
+    return joblib.load(model_path)
 
 
 def extract_features(panel: np.ndarray) -> np.ndarray:
